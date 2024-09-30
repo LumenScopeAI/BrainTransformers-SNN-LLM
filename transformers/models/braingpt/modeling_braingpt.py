@@ -755,12 +755,14 @@ class Synapsis(nn.Module):
         if isinstance(self.layer, nn.Embedding):
             x = self.layer(x)
             x = self._forward_ifneuron(x, self.post_ifneuron)
-            return x
+
         else:
             x = self._forward_ifneuron(x, self.pre_ifneuron)
             x = self.layer(x)
             x = self._forward_ifneuron(x, self.post_ifneuron)
-            return x
+        if self.use_stdp :
+            loss = self.stdp_update()
+        return x
 
     def __getattr__(self, name):
         if name in ['weight', 'bias']:
