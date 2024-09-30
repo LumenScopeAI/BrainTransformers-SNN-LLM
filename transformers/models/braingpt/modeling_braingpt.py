@@ -54,289 +54,6 @@ def _get_unpad_data(attention_mask):
         max_seqlen_in_batch,
     )
     
-# class EI_IFNeuron(nn.Module):
-#     """
-#     EI_IFNeuron神经元，具有自适应阈值和膜电位衰减。
-
-#     动力学方程:
-#     1. 膜电位更新: V(t) = V(t-1) + I(t)
-#        其中，V(t) 是当前时刻的膜电位，I(t) 是输入电流
-
-#     2. 自适应阈值: θ(t) = θ_base + t * alpha
-#        其中，θ(t) 是当前时刻的阈值，θ_base 是基础阈值，
-#        t 是时间步，alpha 是自适应调节权重
-
-#     3. 脉冲生成: S(t) = {
-#            1,  如果 V(t) ≥ θ_activation(t)
-#           -1,  如果 V(t) ≤ -θ_inhibition(t)
-#            0,  其他情况
-#        }
-
-#     4. 膜电位衰减: 
-#        - 正电位: V(t) = max(0, V(t) * (1 - attenuation_rate))
-#        - 负电位: V(t) = min(0, V(t) * (1 - attenuation_rate))
-#     """
-
-#     def __init__(self, base_threshold=0.5, attenuation_rate=1.0, alpha=1.0):
-#         """
-#         初始化IF神经元。
-
-#         参数:
-#         - base_threshold (float): 基础阈值 θ_base。默认为0.5。
-#         - attenuation_rate (float): 膜电位衰减率。默认为1.0（100%衰减，即完全重置）。
-#         - alpha (float): 自适应调节权重。默认为1.0。
-#         """
-#         super(EI_IFNeuron, self).__init__()
-#         self.base_threshold = base_threshold
-#         self.attenuation_rate = attenuation_rate
-#         self.alpha = alpha
-
-#         # 初始化时将 threshold 设为 None
-#         self.register_buffer('threshold', None)
-#         self.register_buffer('membrane_potential', None)
-#         self.register_buffer('time_step', torch.tensor(0))
-#         self.register_buffer('total_output', torch.tensor(0.0))
-
-#     def forward(self, input_current):
-#         """
-#         前向传播，处理输入并产生输出脉冲。
-
-#         参数:
-#         - input_current (Tensor): 输入电流 I(t)
-
-#         返回:
-#         - output (Tensor): 输出脉冲 S(t)
-#         """
-#         self._initialize_membrane_potential(input_current)
-#         self._calculate_adaptive_threshold()
-#         self._update_membrane_potential(input_current)
-#         output = self._generate_spike()
-#         self._attenuate_membrane_potential()
-#         self._update_stats(output)
-#         return output
-
-#     def _initialize_membrane_potential(self, input_current):
-#         """初始化膜电位，如果尚未初始化或形状不匹配"""
-#         if (self.membrane_potential is None or 
-#             self.membrane_potential.shape != input_current.shape):
-#             self.membrane_potential = torch.zeros_like(input_current)
-
-#     def _calculate_adaptive_threshold(self):
-#         """计算自适应阈值 θ(t) = θ_base + t * alpha，并存储为 self.threshold"""
-#         self.threshold = self.base_threshold + self.time_step.float() * self.alpha
-
-#     def _update_membrane_potential(self, input_current):
-#         """更新膜电位 V(t) = V(t-1) + I(t)"""
-#         self.membrane_potential += input_current
-
-#     def _generate_spike(self):
-#         """生成输出脉冲 S(t)"""
-#         condition = torch.abs(self.membrane_potential) >= self.threshold
-#         return torch.where(
-#             condition,
-#             torch.sign(self.membrane_potential),
-#             torch.zeros_like(self.membrane_potential)
-#         )
-
-#     def _attenuate_membrane_potential(self):
-#         """按固定百分比衰减累积的膜电位"""
-#         attenuation_factor = 1 - self.attenuation_rate
-#         self.membrane_potential *= attenuation_factor
-#         # 衰减后膜电位裁剪
-#         self.membrane_potential.clamp_(min=-self.threshold, max=self.threshold)
-
-#     def _update_stats(self, output):
-#         """更新总输出和时间步"""
-#         self.total_output += output.sum().item()
-#         self.time_step += 1
-
-#     def reset(self):
-#         """重置神经元状态"""
-#         self.membrane_potential = None
-#         self.threshold = None
-#         self.time_step.zero_()
-#         self.total_output.zero_()
-
-#     def forward_multi_step(self, input_current, t=None):
-#         """
-#         多时间步前向传播，处理多个时间步的输入，并在方法内部比较并打印每个时间步的输出。
-#         此方法返回累积的输出，以符合调用代码的期望。
-
-#         参数:
-#         - input_current (Tensor): 输入电流 I(t)，形状为 [batch_size, seq_len, neurons] 或 [batch_size, neurons]
-#         - t (int, optional): 时间步数。如果 input_current 的形状为 [batch_size, seq_len, neurons]，则 t 从 seq_len 推断。
-
-#         返回:
-#         - accumulated_output (Tensor): 累积的输出脉冲 S(t)，形状为 [batch_size, neurons]
-#         - None
-#         """
-#         # 确保 input_current 具有时间维度
-#         if input_current.dim() == 2:
-#             if t is None:
-#                 raise ValueError("当 input_current 没有时间维度时，必须指定时间步数 't'")
-#             input_current = input_current.unsqueeze(1).expand(-1, t, -1)
-#         elif input_current.dim() == 3:
-#             t = input_current.size(1)
-#         else:
-#             raise ValueError("input_current 必须是 2D 或 3D 张量")
-
-#         batch_size, seq_len, neurons = input_current.shape
-#         device = input_current.device
-#         # **第一部分：完全并行的操作**
-
-#         # 由于衰减率为 100%，V(t) = I(t)
-#         V_t = input_current  # 形状：[batch_size, seq_len, neurons]
-
-#         # 计算每个时间步的阈值
-#         time_steps = self.time_step.item() + torch.arange(seq_len, device=device, dtype=torch.float32)
-#         thresholds = self.base_threshold + time_steps.view(1, -1, 1) * self.alpha  # 形状：[1, seq_len, 1]
-
-#         # 并行生成脉冲
-#         spikes_parallel = torch.zeros_like(V_t)
-#         spikes_parallel[V_t >= thresholds] = 1.0
-#         spikes_parallel[V_t <= -thresholds] = -1.0
-
-#         # 计算累积输出
-#         accumulated_output = spikes_parallel.sum(dim=1)
-#         return accumulated_output, None  # 返回累积的输出，以符合调用代码的期望
-
-#     def forward_multi_step_(self, input_current, t=None):
-#         '''
-#         ANN2SNN的无损转化标准函数实现如下所述,由于无损转化中泄露率为1.0,因此可以优化成可并行的
-#         '''
-#         if input_current.dim() == 2:
-#             if t is None:
-#                 raise ValueError("当 input_current 没有时间维度时，必须指定时间步数 't'")
-#             input_current = input_current.unsqueeze(1).expand(-1, t, -1)
-#         elif input_current.dim() == 3:
-#             t = input_current.size(1)
-#         else:
-#             raise ValueError("input_current 必须是 2D 或 3D 张量")
-
-#         batch_size, seq_len, num_elements = input_current.shape
-#         device = input_current.device
-
-#         # 初始化膜电位
-#         V_t = torch.zeros(batch_size, num_elements, device=device)
-
-#         # 初始化累积输出
-#         accumulated_output = torch.zeros(batch_size, num_elements, device=device)
-
-#         for i in range(seq_len):
-#             # 计算自适应阈值
-#             current_time_step = self.time_step.float() + i
-#             threshold = self.base_threshold + current_time_step * self.alpha
-
-#             # 更新膜电位，包含衰减
-#             V_t = V_t * (1 - self.attenuation_rate) + input_current[:, i, :]
-
-#             # 生成脉冲
-#             output_spikes = torch.zeros_like(V_t)
-#             output_spikes[V_t >= threshold] = 1.0
-#             output_spikes[V_t <= -threshold] = -1.0
-
-#             # 累积输出
-#             accumulated_output += output_spikes
-
-#             # 膜电位裁剪
-#             V_t = torch.clamp(V_t, min=-threshold, max=threshold)
-
-#         # 更新时间步
-#         self.time_step += seq_len
-
-#         return accumulated_output, None
-
-# class Synapsis(nn.Module):
-#     def __init__(self, pre_ifneuron, layer, post_ifneuron, bits=8):
-#         super().__init__()
-#         self.pre_ifneuron = pre_ifneuron
-#         self.layer = layer
-#         self.post_ifneuron = post_ifneuron
-#         self.bits = bits
-#         self.max_value = 2**(bits - 1) - 1
-    
-#     def _get_time_steps(self):
-#         return self.max_value
-    
-#     def _compute_scaling_factor(self, x):
-#         max_abs = x.abs().max()
-#         return max_abs / self.max_value if max_abs != 0 else 1.0
-    
-#     def _forward_ifneuron(self, x, ifneuron, layer=None):
-#         time_steps = self._get_time_steps()
-#         scaling_factor = self._compute_scaling_factor(x)
-        
-#         x_scaled = x / scaling_factor
-
-#         # 将输入展平成二维张量 [batch_size, num_elements]
-#         x_flat = x_scaled.view(x_scaled.size(0), -1)
-
-#         # 使用 forward_multi_step 方法
-#         accumulated_output, _ = ifneuron.forward_multi_step(x_flat, time_steps)
-        
-#         # 将 accumulated_output reshaped 回输入 x 的形状
-#         accumulated_output = accumulated_output.view_as(x)
-        
-#         # 返回调整后的输出
-#         return (accumulated_output * scaling_factor).to(x.dtype)
-    
-#     def _forward_ifneuron_single_steps(self, x, ifneuron):
-#         time_steps = self._get_time_steps(x)
-#         if time_steps == 0:
-#             return x  # 直接返回输入，不进行任何处理
-
-#         outputs = []
-#         for _ in range(time_steps):
-#             output = ifneuron(x)
-#             outputs.append(output)
-#         ifneuron.reset()
-#         return torch.stack(outputs).sum(dim=0)
-    
-#     def forward(self, x):
-#         if isinstance(self.layer, nn.Embedding):
-#             x = self.layer(x)
-#             x = self._forward_ifneuron(x, self.post_ifneuron)
-#             return x
-#         else:
-#             x = self._forward_ifneuron(x, self.pre_ifneuron)
-#             x = self.layer(x)
-#             x = self._forward_ifneuron(x, self.post_ifneuron)
-#             return x
-            
-#     def __getattr__(self, name):
-#         if name in ['weight', 'bias']:
-#             return getattr(self.layer, name)
-#         return super().__getattr__(name)
-    
-#     def reset_parameters(self):
-#         if hasattr(self.layer, 'reset_parameters'):
-#             self.layer.reset_parameters()
-#         for ifneuron in [self.pre_ifneuron, self.post_ifneuron]:
-#             if hasattr(ifneuron, 'reset_parameters'):
-#                 ifneuron.reset_parameters()
-    
-#     def train(self, mode=True):
-#         super().train(mode)
-#         self.pre_ifneuron.train(mode)
-#         self.layer.train(mode)
-#         self.post_ifneuron.train(mode)
-#         return self
-    
-#     def eval(self):
-#         super().eval()
-#         self.pre_ifneuron.eval()
-#         self.layer.eval()
-#         self.post_ifneuron.eval()
-#         return self
-    
-#     def parameters(self):
-#         return (
-#             list(self.pre_ifneuron.parameters()) +
-#             list(self.layer.parameters()) +
-#             list(self.post_ifneuron.parameters()) 
-#         )
-
-
 class EI_IFNeuron(nn.Module):
     """
     EI_IFNeuron神经元，具有自适应阈值和膜电位衰减。
@@ -374,65 +91,11 @@ class EI_IFNeuron(nn.Module):
         self.attenuation_rate = attenuation_rate
         self.alpha = alpha
 
-        # 使用 register_buffer 只注册需要的缓冲区
+        # 初始化时将 threshold 设为 None
         self.register_buffer('threshold', None)
         self.register_buffer('membrane_potential', None)
         self.register_buffer('time_step', torch.tensor(0))
         self.register_buffer('total_output', torch.tensor(0.0))
-
-        # 初始化内部存储
-        self._firing_times = None
-        self._spike_counts = None
-        self._membrane_potentials = None
-
-    @property
-    def firing_times(self):
-        return self._firing_times
-
-    @firing_times.setter
-    def firing_times(self, value):
-        self._firing_times = value
-
-    @property
-    def spike_counts(self):
-        return self._spike_counts
-
-    @spike_counts.setter
-    def spike_counts(self, value):
-        self._spike_counts = value
-
-    @property
-    def membrane_potentials(self):
-        return self._membrane_potentials
-
-    @membrane_potentials.setter
-    def membrane_potentials(self, value):
-        self._membrane_potentials = value
-
-    @property
-    def average_spike_count(self):
-        """计算平均脉冲次数"""
-        if self.spike_counts is None:
-            return None
-        total_time_steps = self.time_step.item()
-        return self.spike_counts.mean(dim=0) / total_time_steps
-
-    @property
-    def average_membrane_potential(self):
-        """计算平均膜电位"""
-        if self.membrane_potentials is None:
-            return None
-        total_time_steps = self.time_step.item()
-        return self.membrane_potentials.mean(dim=0) / total_time_steps
-
-    def reset(self):
-        self.membrane_potential = None
-        self.firing_times = None
-        self.spike_counts = None
-        self.membrane_potentials = None
-        self.time_step = torch.tensor(0)
-        self.total_output = torch.tensor(0.0)
-        self.threshold = None
 
     def forward(self, input_current):
         """
@@ -457,10 +120,6 @@ class EI_IFNeuron(nn.Module):
         if (self.membrane_potential is None or 
             self.membrane_potential.shape != input_current.shape):
             self.membrane_potential = torch.zeros_like(input_current)
-            # 重置记录属性
-            self.firing_times = None
-            self.spike_counts = None
-            self.membrane_potentials = None
 
     def _calculate_adaptive_threshold(self):
         """计算自适应阈值 θ(t) = θ_base + t * alpha，并存储为 self.threshold"""
@@ -491,6 +150,13 @@ class EI_IFNeuron(nn.Module):
         self.total_output += output.sum().item()
         self.time_step += 1
 
+    def reset(self):
+        """重置神经元状态"""
+        self.membrane_potential = None
+        self.threshold = None
+        self.time_step.zero_()
+        self.total_output.zero_()
+
     def forward_multi_step(self, input_current, t=None):
         """
         多时间步前向传播，处理多个时间步的输入，并在方法内部比较并打印每个时间步的输出。
@@ -504,7 +170,6 @@ class EI_IFNeuron(nn.Module):
         - accumulated_output (Tensor): 累积的输出脉冲 S(t)，形状为 [batch_size, neurons]
         - None
         """
-        # 原始代码，不做修改
         # 确保 input_current 具有时间维度
         if input_current.dim() == 2:
             if t is None:
@@ -537,7 +202,7 @@ class EI_IFNeuron(nn.Module):
 
     def forward_multi_step_(self, input_current, t=None):
         '''
-        ANN2SNN的无损转化标准函数实现，保持与原始实现一致
+        ANN2SNN的无损转化标准函数实现如下所述,由于无损转化中泄露率为1.0,因此可以优化成可并行的
         '''
         if input_current.dim() == 2:
             if t is None:
@@ -557,14 +222,6 @@ class EI_IFNeuron(nn.Module):
         # 初始化累积输出
         accumulated_output = torch.zeros(batch_size, num_elements, device=device)
 
-        # 初始化记录属性
-        self.firing_times = torch.full((batch_size, num_elements), float('inf'), device=device)
-        self.spike_counts = torch.zeros(batch_size, num_elements, device=device)
-        self.membrane_potentials = torch.zeros(batch_size, num_elements, device=device)
-
-        # 确保时间步在正确的设备上
-        self.time_step = self.time_step.to(device)
-
         for i in range(seq_len):
             # 计算自适应阈值
             current_time_step = self.time_step.float() + i
@@ -575,10 +232,8 @@ class EI_IFNeuron(nn.Module):
 
             # 生成脉冲
             output_spikes = torch.zeros_like(V_t)
-            firing_mask_pos = V_t >= threshold
-            firing_mask_neg = V_t <= -threshold
-            output_spikes[firing_mask_pos] = 1.0
-            output_spikes[firing_mask_neg] = -1.0
+            output_spikes[V_t >= threshold] = 1.0
+            output_spikes[V_t <= -threshold] = -1.0
 
             # 累积输出
             accumulated_output += output_spikes
@@ -586,20 +241,10 @@ class EI_IFNeuron(nn.Module):
             # 膜电位裁剪
             V_t = torch.clamp(V_t, min=-threshold, max=threshold)
 
-            # 记录额外信息
-            self.membrane_potentials += V_t.detach()
-            self.spike_counts += (output_spikes != 0).float()
-            firing_mask = (output_spikes != 0) & (self.firing_times == float('inf'))
-            self.firing_times[firing_mask] = current_time_step
-
         # 更新时间步
         self.time_step += seq_len
 
-        # 不需要显式计算平均值，因为它们现在是通过属性计算的
-
         return accumulated_output, None
-
-
 
 class Synapsis(nn.Module):
     def __init__(self, pre_ifneuron, layer, post_ifneuron, bits=8):
@@ -609,113 +254,14 @@ class Synapsis(nn.Module):
         self.post_ifneuron = post_ifneuron
         self.bits = bits
         self.max_value = 2**(bits - 1) - 1
-        # 添加一个标志以确定使用哪个 forward_multi_step 方法
-        self.use_stdp = False  # 默认为 False
-        # STDP parameters
-        self.A_plus = 0.1
-        self.A_minus = 0.1
-        self.tau_plus = 20
-        self.tau_minus = 20
-
-        # Learning rates
-        self.eta_w = 0.001
-        self.eta_theta = 0.001
-        self.eta_alpha = 0.001
-        self.eta_r = 0.001
-
-        # Target values
-        self.S_target = 0.1
-        self.V_target = -65
-        self.V_rest = -70
-        self.T_target = 10
-        self.C = 1.0  # Total synaptic strength constant
-
-        # Loss function weights
-        self.lambda_w = 1.0
-        self.lambda_theta = 1.0
-        self.lambda_alpha = 1.0
-        self.lambda_r = 1.0
-        self.lambda_C = 1.0
-        self.lambda_T = 1.0
-
-    def stdp_update(self):
-        """执行STDP更新"""
-        if not self.use_stdp:
-            return 0
-
-        pre_firing_times = self.pre_ifneuron.firing_times
-        post_firing_times = self.post_ifneuron.firing_times
-
-        if pre_firing_times is None or post_firing_times is None:
-            return 0
-
-        # 计算时间差
-        delta_t = post_firing_times.unsqueeze(1) - pre_firing_times.unsqueeze(0)
-        
-        # 计算STDP权重变化
-        delta_ij = torch.where(
-            delta_t > 0,
-            self.A_plus * torch.exp(-delta_t / self.tau_plus),
-            -self.A_minus * torch.exp(delta_t / self.tau_minus)
-        )
-        
-        # 更新突触权重
-        w = self.layer.weight.data
-        delta_w = self.eta_w * (delta_ij - w)
-        w_new = w + delta_w
-        
-        # 归一化权重
-        w_sum = w_new.sum(dim=1, keepdim=True)
-        w_new = w_new * self.C / w_sum
-        self.layer.weight.data = w_new
-        
-        # 更新神经元参数
-        S_avg = self.post_ifneuron.average_spike_count
-        V_avg = self.post_ifneuron.average_membrane_potential
-
-        if S_avg is not None and V_avg is not None:
-            self.post_ifneuron.base_threshold += self.eta_theta * (self.S_target - S_avg)
-            self.post_ifneuron.alpha += self.eta_alpha * (V_avg - self.V_target)
-            self.post_ifneuron.attenuation_rate = torch.clamp(
-                self.post_ifneuron.attenuation_rate + self.eta_r * (V_avg - self.V_rest),
-                0, 1
-            )
-        
-        # 计算平均时间步数 T
-        T = self._compute_average_time_steps()
-        
-        # 计算损失
-        loss = (
-            self.lambda_w * torch.sum((w_new - delta_ij) ** 2) +
-            self.lambda_theta * torch.sum((self.S_target - S_avg) ** 2) +
-            self.lambda_alpha * torch.sum((V_avg - self.V_target) ** 2) +
-            self.lambda_r * torch.sum((V_avg - self.V_rest) ** 2) +
-            self.lambda_C * torch.sum((torch.sum(w_new, dim=1) - self.C) ** 2) +
-            self.lambda_T * (T - self.T_target) ** 2
-        )
-        
-        return loss.item()
-
-    def _compute_average_time_steps(self):
-        """计算平均时间步数 T"""
-        V_t = self.post_ifneuron.membrane_potential
-        theta_t = self.post_ifneuron.base_threshold + self.post_ifneuron.alpha * torch.arange(len(V_t), dtype=torch.float32)
-        lambda_factor = 0.1  # 可调整的缩放因子
-
-        P_spike = torch.sigmoid((V_t - theta_t) / lambda_factor)
-        P_no_spike = 1 - P_spike
-        P_no_spike_cumulative = torch.cumprod(P_no_spike, dim=0)
-        T = torch.sum(torch.arange(1, len(V_t) + 1, dtype=torch.float32) * P_spike * P_no_spike_cumulative)
-
-        return T
     
     def _get_time_steps(self):
         return self.max_value
-
+    
     def _compute_scaling_factor(self, x):
         max_abs = x.abs().max()
         return max_abs / self.max_value if max_abs != 0 else 1.0
-
+    
     def _forward_ifneuron(self, x, ifneuron, layer=None):
         time_steps = self._get_time_steps()
         scaling_factor = self._compute_scaling_factor(x)
@@ -723,22 +269,17 @@ class Synapsis(nn.Module):
         x_scaled = x / scaling_factor
 
         # 将输入展平成二维张量 [batch_size, num_elements]
-        original_shape = x_scaled.shape
         x_flat = x_scaled.view(x_scaled.size(0), -1)
 
-        # 根据是否使用 STDP 来选择 forward_multi_step 方法
-        if self.use_stdp:
-            # print('STDP like training or testing...')
-            accumulated_output, _ = ifneuron.forward_multi_step_(x_flat, time_steps)
-        else:
-            accumulated_output, _ = ifneuron.forward_multi_step(x_flat, time_steps)
-
+        # 使用 forward_multi_step 方法
+        accumulated_output, _ = ifneuron.forward_multi_step(x_flat, time_steps)
+        
         # 将 accumulated_output reshaped 回输入 x 的形状
-        accumulated_output = accumulated_output.view(original_shape)
-
+        accumulated_output = accumulated_output.view_as(x)
+        
         # 返回调整后的输出
         return (accumulated_output * scaling_factor).to(x.dtype)
-
+    
     def _forward_ifneuron_single_steps(self, x, ifneuron):
         time_steps = self._get_time_steps(x)
         if time_steps == 0:
@@ -750,59 +291,50 @@ class Synapsis(nn.Module):
             outputs.append(output)
         ifneuron.reset()
         return torch.stack(outputs).sum(dim=0)
-
+    
     def forward(self, x):
         if isinstance(self.layer, nn.Embedding):
             x = self.layer(x)
             x = self._forward_ifneuron(x, self.post_ifneuron)
-
+            return x
         else:
             x = self._forward_ifneuron(x, self.pre_ifneuron)
             x = self.layer(x)
             x = self._forward_ifneuron(x, self.post_ifneuron)
-        if self.use_stdp :
-            loss = self.stdp_update()
-        return x
-
+            return x
+            
     def __getattr__(self, name):
         if name in ['weight', 'bias']:
             return getattr(self.layer, name)
         return super().__getattr__(name)
-
+    
     def reset_parameters(self):
         if hasattr(self.layer, 'reset_parameters'):
             self.layer.reset_parameters()
         for ifneuron in [self.pre_ifneuron, self.post_ifneuron]:
             if hasattr(ifneuron, 'reset_parameters'):
                 ifneuron.reset_parameters()
-
+    
     def train(self, mode=True):
         super().train(mode)
         self.pre_ifneuron.train(mode)
         self.layer.train(mode)
         self.post_ifneuron.train(mode)
         return self
-
+    
     def eval(self):
         super().eval()
         self.pre_ifneuron.eval()
         self.layer.eval()
         self.post_ifneuron.eval()
         return self
-
+    
     def parameters(self):
         return (
             list(self.pre_ifneuron.parameters()) +
             list(self.layer.parameters()) +
             list(self.post_ifneuron.parameters()) 
         )
-
-    def reset(self):
-        """重置所有模块的状态"""
-        if hasattr(self.pre_ifneuron, 'reset'):
-            self.pre_ifneuron.reset()
-        if hasattr(self.post_ifneuron, 'reset'):
-            self.post_ifneuron.reset()
 '''
 事实上，SNNRMSNorm可以使用以下纯SNN组件替换，鉴于现阶段算子仍未适配，因此暂时使用SNNRMSNorm的ANN混合版本。
 同理Synapsis可以使用加法代替乘法，由于每一时间步神经元的输出只包含[-1,0,1]因此直接对layer.weight进行相应的加法操作，
