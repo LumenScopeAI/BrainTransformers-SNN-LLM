@@ -168,14 +168,14 @@ test_generation(test_prompts)
 
 def stdp_train(model, data_loader, num_epochs):
     print("\n开始 STDP 训练...")
+    model.train()  # 设置模型为训练模式
+    enable_stdp_training(model)  # 启用 STDP 训练
+    
     for epoch in range(num_epochs):
         print(f"\n开始第 {epoch+1} 轮训练...")
         total_loss = 0
         
         for batch in tqdm(data_loader, desc=f"Epoch {epoch+1}"):
-            # 启用 STDP 训练
-            enable_stdp_training(model)
-            
             # 对每个样本进行处理
             for sample in batch:
                 messages = [
@@ -183,26 +183,16 @@ def stdp_train(model, data_loader, num_epochs):
                     {"role": "user", "content": sample}
                 ]
                 
-                # 使用当前样本生成文本，触发神经元活动
+                # 使用当前样本生成文本，这将自动触发 STDP 更新
                 _ = generate_text(messages)
-            
-            # STDP 更新和损失计算
-            batch_loss = 0
-            for module in model.modules():
-                if type(module).__name__ == 'Synapsis' and hasattr(module, 'stdp_update'):
-                    batch_loss += module.stdp_update()
-            
-            total_loss += batch_loss
-            print(f"Batch STDP loss: {batch_loss:.4f}")
-            
-            # 禁用 STDP 训练
-            disable_stdp_training(model)
             
             # 重置神经元状态
             reset_neuron_states(model)
         
-        print(f"第 {epoch+1} 轮平均损失: {total_loss / len(data_loader):.4f}")
+        print(f"第 {epoch+1} 轮训练完成")
 
+    disable_stdp_training(model)  # 禁用 STDP 训练
+    model.eval()  # 将模型设置回评估模式
     print("\nSTDP 训练完成")
 
 # 执行 STDP 训练
