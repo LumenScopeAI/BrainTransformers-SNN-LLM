@@ -254,6 +254,7 @@ class Synapsis(nn.Module):
         self.post_ifneuron = post_ifneuron
         self.bits = bits
         self.max_value = 2**(bits - 1) - 1
+        self.if_STDP_Inspire=False
     
     def _get_time_steps(self):
         return self.max_value
@@ -293,15 +294,26 @@ class Synapsis(nn.Module):
         return torch.stack(outputs).sum(dim=0)
     
     def forward(self, x):
-        if isinstance(self.layer, nn.Embedding):
-            x = self.layer(x)
-            x = self._forward_ifneuron(x, self.post_ifneuron)
-            return x
+        if not self.if_STDP_Inspire:
+            if isinstance(self.layer, nn.Embedding):
+                x = self.layer(x)
+                x = self._forward_ifneuron(x, self.post_ifneuron)
+                return x
+            else:
+                x = self._forward_ifneuron(x, self.pre_ifneuron)
+                x = self.layer(x)
+                x = self._forward_ifneuron(x, self.post_ifneuron)
+                return x
         else:
-            x = self._forward_ifneuron(x, self.pre_ifneuron)
-            x = self.layer(x)
-            x = self._forward_ifneuron(x, self.post_ifneuron)
-            return x
+            if isinstance(self.layer, nn.Embedding):
+                x = self.layer(x)
+                x = self._forward_ifneuron_single_steps(x, self.post_ifneuron)
+                return x
+            else:
+                x = self._forward_ifneuron_single_steps(x, self.pre_ifneuron)
+                x = self.layer(x)
+                x = self._forward_ifneuron_single_steps(x, self.post_ifneuron)
+                return x            
             
     def __getattr__(self, name):
         if name in ['weight', 'bias']:
@@ -1188,50 +1200,50 @@ class SiLUApproximator(nn.Module):
 
         return output
 
-class SNNRMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6, square_approx_model=None, sqrt_approx_model=None):
-        """
-        SNNRMSNorm is equivalent to T5LayerNorm
-        """
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.variance_epsilon = eps
-        self.square_approx_model = square_approx_model  # 引入平方近似模型
-        self.sqrt_approx_model = sqrt_approx_model      # 引入平方根近似模型
+# class SNNRMSNorm(nn.Module):
+#     def __init__(self, hidden_size, eps=1e-6, square_approx_model=None, sqrt_approx_model=None):
+#         """
+#         SNNRMSNorm is equivalent to T5LayerNorm
+#         """
+#         super().__init__()
+#         self.weight = nn.Parameter(torch.ones(hidden_size))
+#         self.variance_epsilon = eps
+#         self.square_approx_model = square_approx_model  # 引入平方近似模型
+#         self.sqrt_approx_model = sqrt_approx_model      # 引入平方根近似模型
 
-    def forward(self, hidden_states):
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.float()
-        device = hidden_states.device
+#     def forward(self, hidden_states):
+#         input_dtype = hidden_states.dtype
+#         hidden_states = hidden_states.float()
+#         device = hidden_states.device
 
-        if self.square_approx_model is None:
-            # 使用原始的 pow(2)
-            variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        else:
-            # 使用平方近似模型
-            original_shape = hidden_states.shape
-            hidden_states_flat = hidden_states.view(-1, 1)
+#         if self.square_approx_model is None:
+#             # 使用原始的 pow(2)
+#             variance = hidden_states.pow(2).mean(-1, keepdim=True)
+#         else:
+#             # 使用平方近似模型
+#             original_shape = hidden_states.shape
+#             hidden_states_flat = hidden_states.view(-1, 1)
 
-            with torch.no_grad():
-                squared = self.square_approx_model(hidden_states_flat).view(original_shape)
+#             with torch.no_grad():
+#                 squared = self.square_approx_model(hidden_states_flat).view(original_shape)
 
-            variance = squared.mean(-1, keepdim=True)
+#             variance = squared.mean(-1, keepdim=True)
 
-        if self.sqrt_approx_model is None:
-            # 使用原始的 rsqrt
-            hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-        else:
-            # 使用平方根近似模型
-            variance_adjusted = variance + self.variance_epsilon
-            variance_flat = variance_adjusted.view(-1, 1)
+#         if self.sqrt_approx_model is None:
+#             # 使用原始的 rsqrt
+#             hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+#         else:
+#             # 使用平方根近似模型
+#             variance_adjusted = variance + self.variance_epsilon
+#             variance_flat = variance_adjusted.view(-1, 1)
 
-            with torch.no_grad():
-                inv_std = 1.0 / self.sqrt_approx_model(variance_flat)
+#             with torch.no_grad():
+#                 inv_std = 1.0 / self.sqrt_approx_model(variance_flat)
 
-            inv_std = inv_std.view_as(variance_adjusted)
-            hidden_states = hidden_states * inv_std
+#             inv_std = inv_std.view_as(variance_adjusted)
+#             hidden_states = hidden_states * inv_std
 
-        return self.weight * hidden_states.to(input_dtype)
+#         return self.weight * hidden_states.to(input_dtype)
 
 # Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->BrainGPT
 class SNNRMSNorm(nn.Module):
