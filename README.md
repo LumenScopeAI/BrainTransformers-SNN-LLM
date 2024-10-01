@@ -84,3 +84,9 @@ messages = [
 response = generate_text(messages)
 print(response)
 ```
+
+## Acknowledgments
+
+The model was trained using ANN-Base-Qwen2, with a total of three training stages, including SNN-specific neuron synaptic plasticity training. The technical report is still being prepared. Please note that SNN models do not support ANN fine-tuning techniques. We are currently developing specialized fine-tuning code tools for SNN models. Our open-source model has achieved leading SOTA results, and we welcome your stars.
+
+This repository includes a complete transformers package, which can directly replace the transformers package in your development environment. This allows compatibility with our SNN-Base-LLM without affecting existing usage.
