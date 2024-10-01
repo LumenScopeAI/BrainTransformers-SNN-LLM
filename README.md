@@ -5,7 +5,7 @@ Based on BrainTransformers, BrainGPTForCausalLM is a Large Language Model (LLM) 
 ## Model Availability
 
 - The current pre-trained model parameters have been published on ModelScope: [DataLinguistic/BrainTransformers-3B-Chat](https://www.modelscope.cn/models/DataLinguistic/BrainTransformers-3B-Chat)
-- They will subsequently be released on Hugging Face.
+- The current pre-trained model parameters have been published on Hugging Face.[LumenscopeAI/BrainTransformers-3B-Chat](https://huggingface.co/LumenscopeAI/BrainTransformers-3B-Chat)
 
 ## Repository
 
@@ -43,3 +43,8 @@ messages = [
 response = generate_text(messages)
 print(response)
 ```
+
+
+---
+license: apache-2.0
+---
