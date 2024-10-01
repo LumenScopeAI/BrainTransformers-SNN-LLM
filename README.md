@@ -15,30 +15,42 @@ The github link is: [LumenScopeAI/BrainTransformers-SNN-LLM](https://github.com/
 
 Below are the performance metrics of our 3B model on various benchmarks:
 
-| Task Category | Dataset | Performance |
-|---------------|---------|-------------|
-| General Tasks | MMLU | 63.2 |
-|               | MMLU-pro | 33.3 |
-|               | MMLU-redux | 61.3 |
-|               | BBH | 54.1 |
-|               | ARC-C | 54.3 |
-|               | Trurhfulqa | 47.1 |
-|               | Winogrande | 68.8 |
-|               | Hellaswag | 72.8 |
-| Math and Science Tasks | GPQA | 25.3 |
-|                        | Theoremqa | 26.4 |
-|                        | MATH | 41.0 |
-|                        | MMLU-stem | 60.2 |
-|                        | GSM8K | 76.3 |
-| Coding Tasks | HumanEval | 40.5 |
-|              | HumanEval+ | 34.6 |
-|              | MBPP | 55.0 |
-|              | MBPP+ | 47.5 |
-|              | MultiPL-E | 39.6 |
-| Multilingual Tasks | Multi-Exam | 52.6 |
-|                    | Multi-Understanding | 73.9 |
-|                    | Multi-Mathematics | 47.1 |
-|                    | Multi-Translation | 28.2 |
+### General Tasks
+
+| Dataset | Performance |
+|---------|-------------|
+| MMLU | 63.2 |
+| MMLU-pro | 33.3 |
+| MMLU-redux | 61.3 |
+| BBH | 54.1 |
+| ARC-C | 54.3 |
+| Trurhfulqa | 47.1 |
+| Winogrande | 68.8 |
+| Hellaswag | 72.8 |
+
+### Math and Science Tasks
+
+| Dataset | Performance |
+|---------|-------------|
+| GPQA | 25.3 |
+| Theoremqa | 26.4 |
+| MATH | 41.0 |
+| MMLU-stem | 60.2 |
+| GSM8K | 76.3 |
+
+### Coding and Multilingual Tasks
+
+| Dataset | Performance |
+|---------|-------------|
+| HumanEval | 40.5 |
+| HumanEval+ | 34.6 |
+| MBPP | 55.0 |
+| MBPP+ | 47.5 |
+| MultiPL-E | 39.6 |
+| Multi-Exam | 52.6 |
+| Multi-Understanding | 73.9 |
+| Multi-Mathematics | 47.1 |
+| Multi-Translation | 28.2 |
 
 ## Usage
 
