@@ -198,7 +198,7 @@ class EI_IFNeuron(nn.Module):
 
         # 计算累积输出
         accumulated_output = spikes_parallel.sum(dim=1)
-        return accumulated_output, None  # 返回累积的输出，以符合调用代码的期望
+        return accumulated_output, spikes_parallel  # 返回累积的输出，以符合调用代码的期望
 
     def forward_multi_step_(self, input_current, t=None):
         '''
@@ -283,15 +283,18 @@ class Synapsis(nn.Module):
     
     def _forward_ifneuron_single_steps(self, x, ifneuron):
         time_steps = self._get_time_steps(x)
+        scaling_factor = self._compute_scaling_factor(x)
+        
+        x_scaled = x / scaling_factor
         if time_steps == 0:
             return x  # 直接返回输入，不进行任何处理
 
         outputs = []
         for _ in range(time_steps):
-            output = ifneuron(x)
+            output = ifneuron(x_scaled)
             outputs.append(output)
         ifneuron.reset()
-        return torch.stack(outputs).sum(dim=0)
+        return torch.stack(outputs* scaling_factor).sum(dim=0)
     
     def forward(self, x):
         if not self.if_STDP_Inspire:
@@ -347,6 +350,210 @@ class Synapsis(nn.Module):
             list(self.layer.parameters()) +
             list(self.post_ifneuron.parameters()) 
         )
+        
+class SNNMatmul(nn.Module):
+    def __init__(self, neuron_q, neuron_k, bits=8):
+        super(SNNMatmul, self).__init__()
+        self.neuron_q = neuron_q
+        self.neuron_k = neuron_k
+        self.bits = bits
+        self.max_value = 2**(bits - 1) - 1
+
+    def _get_time_steps(self):
+        return self.max_value
+
+    def _compute_scaling_factor(self, x):
+        max_abs = x.abs().max()
+        return max_abs / self.max_value if max_abs != 0 else 1.0
+
+    def forward(self, Q, K, time_steps=None):
+        """
+        参数：
+            Q: 张量，形状为 [batch_size, num_heads, seq_len_q, head_dim]
+            K: 张量，形状为 [batch_size, num_heads, seq_len_k, head_dim]
+            time_steps: 神经元的时间步数
+        返回：
+            A_T: 张量，形状为 [batch_size, num_heads, seq_len_q, seq_len_k]
+        """
+        if Q.dim() != 4 or K.dim() != 4:
+            raise ValueError("Q 和 K 应该是 4D 张量")
+
+        batch_size, num_heads, seq_len_q, head_dim_q = Q.shape
+        _, _, seq_len_k, head_dim_k = K.shape
+        if head_dim_q != head_dim_k:
+            raise ValueError("Q 和 K 的 head_dim 必须匹配")
+
+        device = Q.device
+
+        if time_steps is None:
+            time_steps = self._get_time_steps()
+
+        # 计算缩放因子
+        scaling_factor_q = self._compute_scaling_factor(Q)
+        scaling_factor_k = self._compute_scaling_factor(K)
+
+        # 缩放输入
+        Q_scaled = Q / scaling_factor_q
+        K_scaled = K / scaling_factor_k
+
+        # 初始化变量
+        S_Q_t_positive = torch.zeros(batch_size, num_heads, seq_len_q, head_dim_q, device=device)
+        S_Q_t_negative = torch.zeros_like(S_Q_t_positive)
+        S_K_t_positive = torch.zeros(batch_size, num_heads, seq_len_k, head_dim_k, device=device)
+        S_K_t_negative = torch.zeros_like(S_K_t_positive)
+        A_T = torch.zeros(batch_size, num_heads, seq_len_q, seq_len_k, device=device)
+
+        # 重置神经元
+        self.neuron_q.reset()
+        self.neuron_k.reset()
+
+        for t in range(time_steps):
+            # 获取神经元的脉冲输出
+            Q_s_t = self.neuron_q(Q_scaled)  # [batch_size, num_heads, seq_len_q, head_dim]
+            K_s_t = self.neuron_k(K_scaled)  # [batch_size, num_heads, seq_len_k, head_dim]
+
+            # 在脉冲生成后立即恢复缩放
+            Q_s_t = Q_s_t * scaling_factor_q
+            K_s_t = K_s_t * scaling_factor_k
+
+            # 分离正负脉冲
+            Q_s_t_positive = torch.clamp(Q_s_t, min=0)
+            Q_s_t_negative = torch.clamp(Q_s_t, max=0)
+            K_s_t_positive = torch.clamp(K_s_t, min=0)
+            K_s_t_negative = torch.clamp(K_s_t, max=0)
+
+            # 更新累积和
+            S_Q_t_positive += Q_s_t_positive
+            S_Q_t_negative += Q_s_t_negative
+            S_K_t_positive += K_s_t_positive
+            S_K_t_negative += K_s_t_negative
+
+            # 计算各项
+            # term1 = S_Q_t * K_s_t^T
+            term1 = torch.matmul(S_Q_t_positive, K_s_t_positive.transpose(-1, -2)) + \
+                    torch.matmul(S_Q_t_negative, K_s_t_negative.transpose(-1, -2)) + \
+                    torch.matmul(S_Q_t_positive, K_s_t_negative.transpose(-1, -2)) + \
+                    torch.matmul(S_Q_t_negative, K_s_t_positive.transpose(-1, -2))
+
+            # term2 = Q_s_t * S_K_t^T
+            term2 = torch.matmul(Q_s_t_positive, S_K_t_positive.transpose(-1, -2)) + \
+                    torch.matmul(Q_s_t_negative, S_K_t_negative.transpose(-1, -2)) + \
+                    torch.matmul(Q_s_t_positive, S_K_t_negative.transpose(-1, -2)) + \
+                    torch.matmul(Q_s_t_negative, S_K_t_positive.transpose(-1, -2))
+
+            # term3 = Q_s_t * K_s_t^T
+            term3 = torch.matmul(Q_s_t_positive, K_s_t_positive.transpose(-1, -2)) + \
+                    torch.matmul(Q_s_t_negative, K_s_t_negative.transpose(-1, -2)) + \
+                    torch.matmul(Q_s_t_positive, K_s_t_negative.transpose(-1, -2)) + \
+                    torch.matmul(Q_s_t_negative, K_s_t_positive.transpose(-1, -2))
+
+            # 累加结果
+            A_T += term1 + term2 - term3
+
+        return A_T
+
+class SNNSoftmax(nn.Module):
+    def __init__(self, neuron=None, bits=8, dim=-1, dtype=None):
+        super(SNNSoftmax, self).__init__()
+        self.time_steps = None
+        self.bits = bits
+        self.max_value = 2 ** (bits - 1) - 1
+        self.neuron = neuron if neuron is not None else EI_IFNeuron()
+        self.dim = dim  # 添加 dim 参数
+        self.dtype = dtype  # 添加 dtype 参数
+    
+    def _get_time_steps(self):
+        return self.max_value
+
+    def _compute_scaling_factor(self, x):
+        max_abs = x.abs().max()
+        return max_abs / self.max_value if max_abs != 0 else 1.0
+
+    def forward(self, inputs):
+        if self.time_steps is None:
+            self.time_steps = self._get_time_steps()
+        batch_size = inputs.size(0)
+
+        # 计算缩放因子，防止输入过大导致神经元过载
+        scaling_factor = self._compute_scaling_factor(inputs)
+        inputs_scaled = inputs / scaling_factor
+
+        # 重置神经元状态
+        self.neuron.reset()
+
+        # 初始化累积输入和累积输出
+        accumulated_input = torch.zeros_like(inputs)
+        accumulated_output = torch.zeros_like(inputs)
+        previous_output = torch.zeros_like(inputs)
+
+        # 在每个时间步处理输入
+        for t in range(self.time_steps):
+            # 神经元前向传播，获取脉冲输出
+            input_spikes = self.neuron(inputs_scaled)
+            # 恢复缩放
+            input_spikes = input_spikes * scaling_factor
+
+            # 累积输入
+            accumulated_input += input_spikes
+
+            # 在累积输入上计算 Softmax，使用添加的 dim 和 dtype 参数
+            softmax_output = F.softmax(accumulated_input, dim=self.dim, dtype=self.dtype)
+
+            # 计算当前时间步的输出脉冲
+            output_spikes = softmax_output - previous_output
+            previous_output = softmax_output
+
+            # 累积输出
+            accumulated_output += output_spikes
+
+        return accumulated_output
+
+class SNNDropout(nn.Module):
+    def __init__(self, neuron=None, bits=8):
+        super(SNNDropout, self).__init__()
+        self.time_steps = None
+        self.bits = bits
+        self.max_value = 2 ** (bits - 1) - 1
+        self.neuron = neuron if neuron is not None else EI_IFNeuron()
+    
+    def _get_time_steps(self):
+        return self.max_value
+
+    def _compute_scaling_factor(self, x):
+        max_abs = x.abs().max()
+        return max_abs / self.max_value if max_abs != 0 else 1.0
+
+    def forward(self, inputs,p,if_train):
+        if self.time_steps is None:
+            self.time_steps = self._get_time_steps()
+        batch_size = inputs.size(0)
+
+        # 计算缩放因子，防止输入过大导致神经元过载
+        scaling_factor = self._compute_scaling_factor(inputs)
+        inputs_scaled = inputs / scaling_factor
+
+        # 重置神经元状态
+        self.neuron.reset()
+
+        # 初始化累积输入和累积输出
+        accumulated_input = torch.zeros_like(inputs)
+        accumulated_output = torch.zeros_like(inputs)
+        previous_output = torch.zeros_like(inputs)
+
+        # 在每个时间步处理输入
+        for t in range(self.time_steps):
+            # 神经元前向传播，获取脉冲输出
+            input_spikes = self.neuron(inputs_scaled)
+            # 恢复缩放
+            output_spikes = input_spikes * scaling_factor
+            # 应用dropout
+            if if_train:
+                mask = torch.bernoulli(torch.full_like(output_spikes, 1 - p))
+                output_spikes = output_spikes * mask / (1 - p)
+            # 累积输出
+            accumulated_output += output_spikes
+
+        return accumulated_output
 '''
 事实上，SNNRMSNorm可以使用以下纯SNN组件替换，鉴于现阶段算子仍未适配，因此暂时使用SNNRMSNorm的ANN混合版本。
 同理Synapsis可以使用加法代替乘法，由于每一时间步神经元的输出只包含[-1,0,1]因此直接对layer.weight进行相应的加法操作，
@@ -1452,7 +1659,10 @@ class BrainGPTAttention(nn.Module):
                 "Passing `padding_mask` is deprecated and will be removed in v4.37. Please make sure use `attention_mask` instead.`"
             )
         bsz, q_len, _ = hidden_states.size()
-
+        # 初始化 SNNMatmul 实例
+        matmul_pre_ifneuron = EI_IFNeuron()
+        matmul_post_ifneuron = EI_IFNeuron()
+        snn_matmul = SNNMatmul(matmul_pre_ifneuron, matmul_post_ifneuron, bits=8)  # 根据需要调整 bits
         query_states = self.q_proj(hidden_states)
         key_states = self.k_proj(hidden_states)
         value_states = self.v_proj(hidden_states)
@@ -1480,8 +1690,9 @@ class BrainGPTAttention(nn.Module):
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
+        
 
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+        attn_weights = snn_matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
 
         if attn_weights.size() != (bsz, self.num_heads, q_len, kv_seq_len):
             raise ValueError(
@@ -1498,9 +1709,12 @@ class BrainGPTAttention(nn.Module):
             attn_weights = attn_weights + attention_mask
 
         # upcast attention to fp32
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
-        attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
-        attn_output = torch.matmul(attn_weights, value_states)
+        soft_max_neuron = EI_IFNeuron()
+        snn_softmax = SNNSoftmax(neuron=soft_max_neuron, dim=-1, dtype=torch.float32)
+        attn_weights = snn_softmax(attn_weights).to(query_states.dtype)
+        snn_dropout = SNNDropout(neuron=soft_max_neuron)
+        attn_weights = snn_dropout(attn_weights, p=self.attention_dropout, if_train=self.training)
+        attn_output = snn_matmul(attn_weights, value_states)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
             raise ValueError(
