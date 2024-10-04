@@ -1,6 +1,6 @@
 # BrainTransformers: SNN-LLM
 
-Based on BrainTransformers, BrainGPTForCausalLM is a Large Language Model (LLM) implemented using Spiking Neural Networks (SNN). Our technical report will be uploaded to arXiv as soon as possible. We plan to further optimize the model at the operator level and adapt it for hardware compatibility, enabling BrainGPTForCausalLM to be deployed on more energy-efficient SNN hardware devices.
+Based on BrainTransformers, BrainGPTForCausalLM is a Large Language Model (LLM) implemented using Spiking Neural Networks (SNN). Our technical report has been submitted to arXiv and is currently in the "on hold" status, pending review. It will be available for public access as soon as the review process is completed. We plan to further optimize the model at the operator level and adapt it for hardware compatibility, enabling BrainGPTForCausalLM to be deployed on more energy-efficient SNN hardware devices.
 
 The current open-source version retains some floating-point calculations to ensure computational efficiency. We will continue to optimize this. Some detailed explanations are provided in the comments within the source code.
 
