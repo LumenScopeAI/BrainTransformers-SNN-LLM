@@ -21,6 +21,7 @@ nvidia-cusparse-cu12==12.1.0.106
 nvidia-nccl-cu12==2.20.5
 nvidia-nvjitlink-cu12==12.5.82
 nvidia-nvtx-cu12==12.1.105
+openai==0.28.0
 pydantic==2.8.2
 regex==2024.7.24
 rouge==1.0.1
