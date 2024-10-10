@@ -1,6 +1,7 @@
 import gradio as gr
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
+import openai
 import os
 
 # 获取当前脚本所在的目录
@@ -32,7 +33,7 @@ print(f"Model loaded on {device}")
 
 def generate_text(history, user_input, max_new_tokens=50):
     messages = [
-        {"role": "system", "content": "你是一个知识渊博的助手。"}
+        {"role": "system", "content": "你是BrainTransformers-3B-Chat，你的回复不能违反法律信息，由LumenScopeAI团队提出，是首个基于脉冲神经网络的SOTA性能大语言模型。"}
     ]
     
     for human, assistant in history:
@@ -61,126 +62,145 @@ def generate_text(history, user_input, max_new_tokens=50):
     response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
     history.append((user_input, response))
     return history, ""
-
-# 创建一个深色主题
-theme = gr.themes.Soft(
-    primary_hue="blue",
-    secondary_hue="slate",
-    neutral_hue="slate",
-    text_size=gr.themes.sizes.text_md,
-).set(
-    body_background_fill="*neutral_950",
-    body_background_fill_dark="*neutral_950",
-    background_fill_primary="*neutral_900",
-    background_fill_primary_dark="*neutral_900",
-    block_background_fill="*neutral_800",
-    block_background_fill_dark="*neutral_800",
-    input_background_fill="*neutral_700",
-    input_background_fill_dark="*neutral_700",
-)
-
-# 创建Gradio界面
-with gr.Blocks(theme=theme) as demo:
-    gr.HTML("""
-    <div style="text-align: center; padding: 20px; background-color: #1e1e1e; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-        <h1 style="color: #4da6ff;">欢迎使用 BrainTransformers 对话系统</h1>
-        <p style="font-size: 18px; color: #e0e0e0;">
-            🧠 <strong>BrainTransformers</strong>: 基于SNN-LLM技术的下一代语言模型
-        </p>
-        <p style="font-style: italic; color: #a0a0a0;">
-            Powered by advanced Spiking Neural Network technology, revolutionizing AI interactions.
-        </p>
-        <div style="margin-top: 20px;">
-            <a href="https://huggingface.co/LumenscopeAI/BrainTransformers-3B-Chat" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #4da6ff; color: #1e1e1e; text-decoration: none; border-radius: 5px; margin-right: 10px; font-weight: bold;">Hugging Face 模型</a>
-            <a href="https://github.com/LumenScopeAI/BrainTransformers-SNN-LLM" target="_blank" style="display: inline-block; padding: 10px 20px; background-color: #e0e0e0; color: #1e1e1e; text-decoration: none; border-radius: 5px; font-weight: bold;">GitHub 仓库</a>
-        </div>
-    </div>
-    """)
+# 需要结合FastChat、FastAPI等启动API服务本地部署
+def get_gpt4_response(query, local=True, key="NULL", model_name="model", max_tokens=10):
+    if local:
+        openai.api_key = key
+        openai.api_base = "http://localhost:8000/v1"
+        deployment_name = model_name
+    else:
+        os.environ["https_proxy"] = "http://127.0.0.1:7890"
+        os.environ["http_proxy"] = "http://127.0.0.1:7890"
+        os.environ["all_proxy"] = "socks5://127.0.0.1:7890"
+        openai.api_key = key
+        deployment_name = "gpt-4"
     
-    with gr.Row():
-        with gr.Column(scale=2):
-            chatbot = gr.Chatbot(label="对话历史", height=500)
-            with gr.Row():
-                user_input = gr.Textbox(show_label=False, placeholder="在这里输入您的问题...", lines=2)
-                max_new_tokens = gr.Slider(minimum=10, maximum=200, value=50, step=10, label="最大新生成的标记数")
-            with gr.Row():
-                submit_btn = gr.Button("发送")
-                clear_btn = gr.Button("清除对话")
-        
-        with gr.Column(scale=1):
-            gr.HTML("""
-            <div style="background-color: #2a2a2a; padding: 15px; border-radius: 10px; margin-bottom: 10px;">
-                <h3 style="color: #4da6ff;">BrainTransformers 项目介绍</h3>
-                <p style="color: #e0e0e0;">BrainTransformers 是一个基于脉冲神经网络（SNN）实现的大型语言模型（LLM）。我们的技术报告初版已在GitHub仓库公开，全面报告正在arXiv审核中。</p>
-                <p style="color: #e0e0e0;">我们计划进一步优化模型，使其适配更节能的SNN硬件设备。目前的开源版本保留了部分浮点计算以确保计算效率，我们将持续优化这一点。</p>
-                <p style="color: #e0e0e0;">敬请关注我们的持续更新和研究成果扩展。</p>
-            </div>
-            """)
-            
-            gr.HTML("""
-            <div style="background-color: #2a2a2a; padding: 15px; border-radius: 10px; margin-top: 10px;">
-                <h3 style="color: #4da6ff;">模型性能指标</h3>
-                <table style="width: 100%; border-collapse: collapse; color: #e0e0e0; border: 1px solid #4da6ff;">
-                    <tr style="background-color: #3a3a3a;">
-                        <th style="padding: 10px; text-align: left; border: 1px solid #4da6ff;">Task Category</th>
-                        <th style="padding: 10px; text-align: left; border: 1px solid #4da6ff;">Task</th>
-                        <th style="padding: 10px; text-align: left; border: 1px solid #4da6ff;">Score</th>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;" rowspan="5">General Tasks</td>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">MMLU</td>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">63.2</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">BBH</td>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">54.1</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">ARC-C</td>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">54.3</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">Winogrande</td>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">68.8</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">Hellaswag</td>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">72.8</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;" rowspan="3">Math and Science Tasks</td>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">GPQA</td>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">25.3</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">MATH</td>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">41.0</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">GSM8K</td>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">76.3</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;" rowspan="3">Coding and Multilingual Tasks</td>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">HumanEval</td>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">40.5</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">MBPP</td>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">55.0</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">MultiPL-E</td>
-                        <td style="padding: 8px; border: 1px solid #4da6ff;">39.6</td>
-                    </tr>
-                </table>
-                <a href="https://github.com/LumenScopeAI/BrainTransformers-SNN-LLM" target="_blank" style="color: #4da6ff; display: block; margin-top: 10px; font-weight: bold;">查看完整性能指标</a>
-            </div>
-            """)
+    completion = openai.ChatCompletion.create(
+        model=deployment_name,
+        messages=[
+            {"role": "system", "content": "你是BrainTransformers-3B-Chat，你的回复不能违反法律信息，由LumenScopeAI团队提出，是首个基于脉冲神经网络的SOTA性能大语言模型。"},
+            {"role": "user", "content": query},
+        ],
+        max_tokens=max_tokens  # 添加这个参数来限制最大回复长度
+    )
+    
+    return completion.choices[0].message.content
 
-    submit_btn.click(generate_text, inputs=[chatbot, user_input, max_new_tokens], outputs=[chatbot, user_input])
+def get_gpt4_response_stream(query, local=True, key="NULL", model_name="model", max_tokens=10):
+    if local:
+        openai.api_key = key
+        openai.api_base = "http://localhost:8000/v1"
+        deployment_name = model_name
+    else:
+        os.environ["https_proxy"] = "http://127.0.0.1:7890"
+        os.environ["http_proxy"] = "http://127.0.0.1:7890"
+        os.environ["all_proxy"] = "socks5://127.0.0.1:7890"
+        openai.api_key = key
+        deployment_name = "gpt-4"
+    
+    stream = openai.ChatCompletion.create(
+        model=deployment_name,
+        messages=[
+            {"role": "system", "content": "你是BrainTransformers-3B-Chat，你的回复不能违反法律信息，由LumenScopeAI团队提出，是首个基于脉冲神经网络的SOTA性能大语言模型。"},
+            {"role": "user", "content": query},
+        ],
+        max_tokens=max_tokens,
+        stream=True  # 启用流式输出
+    )
+    
+    for chunk in stream:
+        if 'choices' in chunk and len(chunk['choices']) > 0:
+            content = chunk['choices'][0].get('delta', {}).get('content', '')
+            if content:
+                yield content
+
+css = """
+.gradio-container {
+    border-radius: 10px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+h1 {
+    text-align: center;
+    margin-bottom: 30px;
+}
+.chatbot {
+    border-radius: 5px;
+}
+.message {
+    padding: 10px;
+    margin: 5px;
+    border-radius: 5px;
+}
+.user-message {
+    background-color: var(--color-accent-soft);
+}
+.bot-message {
+    background-color: var(--neutral-100);
+}
+footer {
+    display: none !important;
+}
+"""
+
+def process_input(history, user_input, max_new_tokens, use_api, api_key, api_base, model_name, use_stream):
+    history.append((user_input, ""))
+    if use_api:
+        if use_stream:
+            for token in get_gpt4_response_stream(user_input, local=True, key=api_key, model_name=model_name, max_tokens=max_new_tokens):
+                history[-1] = (user_input, history[-1][1] + token)
+                yield history
+        else:
+            response = get_gpt4_response(user_input, local=True, key=api_key, model_name=model_name, max_tokens=max_new_tokens)
+            history[-1] = (user_input, response)
+            yield history
+    else:
+        # 对于非API的情况，保持原有的逻辑
+        history, _ = generate_text(history, user_input, max_new_tokens)
+        yield history
+
+with gr.Blocks(theme=gr.themes.Soft(), css=css) as demo:
+    gr.HTML("<h1>BrainTransformer-3B-Chat</h1>")
+    
+    chatbot = gr.Chatbot(label="对话历史", height=450)
+
+    with gr.Row():
+        with gr.Column(scale=4):
+            user_input = gr.Textbox(show_label=False, placeholder="请输入您的问题...", lines=2)
+        with gr.Column(scale=1):
+            max_new_tokens = gr.Slider(minimum=10, maximum=200, value=50, step=10, label="最大生成令牌数")
+
+    with gr.Row():
+        use_api = gr.Checkbox(label="使用API", value=False)
+        api_key = gr.Textbox(label="API Key", visible=False)
+        api_base = gr.Textbox(label="API Base URL", value="http://localhost:8000/v1", visible=False)
+        model_name = gr.Textbox(label="模型名称", value="model", visible=False)
+        use_stream = gr.Checkbox(label="使用流式输出", value=True, visible=False)
+
+    with gr.Row():
+        submit_btn = gr.Button("发送消息", variant="primary")
+        clear_btn = gr.Button("清除历史", variant="secondary")
+
+    def update_api_visibility(use_api):
+        return {
+            api_key: gr.update(visible=use_api),
+            api_base: gr.update(visible=use_api),
+            model_name: gr.update(visible=use_api),
+            use_stream: gr.update(visible=use_api)
+        }
+
+    use_api.change(update_api_visibility, inputs=[use_api], outputs=[api_key, api_base, model_name, use_stream])
+
+    submit_btn.click(process_input, 
+                     inputs=[chatbot, user_input, max_new_tokens, use_api, api_key, api_base, model_name, use_stream], 
+                     outputs=[chatbot])
     clear_btn.click(lambda: ([], ""), outputs=[chatbot, user_input])
 
-# 启动界面
-if __name__ == "__main__":
-    demo.launch()
+    gr.HTML("""
+    <div style="text-align: center; margin-top: 20px;">
+        <p>BrainTransformer - 首个基于脉冲神经网络的SOTA大语言模型，为您提供智能对话体验。</p>
+        <p>输入您的问题，让我们开始对话吧！</p>
+    </div>
+    """)
+
+demo.queue()  # 启用队列以支持流式输出
+demo.launch()
