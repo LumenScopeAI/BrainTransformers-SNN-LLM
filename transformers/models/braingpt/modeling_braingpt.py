@@ -2871,7 +2871,7 @@ class BrainGPTModel(BrainGPTPreTrainedModel):
         for module in self.modules():
             if isinstance(module, Synapsis):
                 module.current_task_loss = loss
-
+                
 class BrainGPTForCausalLM(BrainGPTPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
@@ -2968,7 +2968,6 @@ class BrainGPTForCausalLM(BrainGPTPreTrainedModel):
         loss = None
         if labels is not None:
             loss = self.compute_loss(logits, labels)
-            self.model.update_current_task_loss(loss.item())
 
         if not return_dict:
             output = (logits,) + outputs[1:]
@@ -2987,57 +2986,31 @@ class BrainGPTForCausalLM(BrainGPTPreTrainedModel):
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
         loss_fct = CrossEntropyLoss()
-        task_loss = loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
-
-        # 计算其他损失组件
-        stdp_loss = self.compute_stdp_loss()
-        neuron_loss = self.compute_neuron_loss()
-        time_step_loss = self.compute_time_step_loss()
-        synaptic_norm_loss = self.compute_synaptic_normalization_loss()
-        regularization_loss = self.compute_regularization_loss()
-
-        # 组合所有损失组件
-        total_loss = (
-            self.config.lambda_task * task_loss +
-            self.config.lambda_stdp * stdp_loss +
-            self.config.lambda_neuron * neuron_loss +
-            self.config.lambda_time * time_step_loss +
-            self.config.lambda_C * synaptic_norm_loss +
-            self.config.lambda_reg * regularization_loss
-        )
-
-        return total_loss
-
-    def compute_stdp_loss(self):
-        return sum(((module.layer.weight - module.tag) ** 2).sum()
-                   for module in self.modules() if isinstance(module, Synapsis))
-
-    def compute_neuron_loss(self):
-        return sum((module.total_output / module.time_step - self.config.S_target) ** 2 +
-                   (module.membrane_potential.mean() - self.config.V_target) ** 2 +
-                   (module.membrane_potential.mean() - self.config.V_rest) ** 2
-                   for module in self.modules() if isinstance(module, EI_IFNeuron))
-
-    def compute_time_step_loss(self):
-        T = sum(module.time_step * torch.sigmoid((module.membrane_potential - module.threshold) / self.config.lambda_T)
-                for module in self.modules() if isinstance(module, EI_IFNeuron))
-        return (T - self.config.T_target) ** 2
-
-    def compute_synaptic_normalization_loss(self):
-        return sum((module.layer.weight.sum(dim=1) - self.config.C) ** 2
-                   for module in self.modules() if isinstance(module, Synapsis))
-
-    def compute_regularization_loss(self):
-        return sum(p.pow(2).sum() for p in self.parameters())
+        return loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
 
     def train_step(self, input_ids, attention_mask=None, position_ids=None, labels=None):
         self.model.enable_stdp_mode()
-        outputs = self(input_ids, attention_mask=attention_mask, position_ids=position_ids, labels=labels)
-        loss = outputs.loss
+        
+        # 前向传播
+        outputs = self(input_ids, attention_mask=attention_mask, position_ids=position_ids)
+        logits = outputs.logits
+        
+        # 计算损失
+        loss = self.compute_loss(logits, labels)
+        
+        # 更新当前任务损失
+        self.model.update_current_task_loss(loss.item())
+        
+        # 计算全局调制因子
         G = self.model.compute_global_modulation(loss.item())
+        
+        # 更新神经元参数
         self.model.update_neuron_parameters(G)
+        
         self.model.disable_stdp_mode()
+        
         return loss.item()
+    
     def prepare_inputs_for_generation(
         self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs
     ):
