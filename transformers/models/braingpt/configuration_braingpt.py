@@ -1,17 +1,4 @@
-""" BrainGPT model configuration"""
-
-from ...configuration_utils import PretrainedConfig
-from ...utils import logging
-
-
-logger = logging.get_logger(__name__)
-
-BRAINGPT_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-}
-
-
 class BrainGPTConfig(PretrainedConfig):
-
     model_type = "braingpt"
     keys_to_ignore_at_inference = ["past_key_values"]
 
@@ -34,6 +21,27 @@ class BrainGPTConfig(PretrainedConfig):
         sliding_window=4096,
         max_window_layers=28,
         attention_dropout=0.0,
+        
+        # STDP 和神经元参数
+        beta=0.1,
+        S_target=0.1,
+        V_target=-65.0,
+        V_rest=-70.0,
+        eta_theta=0.01,
+        eta_alpha=0.01,
+        eta_r=0.01,
+        lambda_T=0.1,
+        T_target=10,
+        C=1.0,
+
+        # 损失函数权重
+        lambda_task=1.0,
+        lambda_stdp=0.1,
+        lambda_neuron=0.1,
+        lambda_time=0.1,
+        lambda_C=0.1,
+        lambda_reg=0.01,
+        
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -57,6 +65,26 @@ class BrainGPTConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.rope_theta = rope_theta
         self.attention_dropout = attention_dropout
+
+        # STDP 和神经元参数
+        self.beta = beta
+        self.S_target = S_target
+        self.V_target = V_target
+        self.V_rest = V_rest
+        self.eta_theta = eta_theta
+        self.eta_alpha = eta_alpha
+        self.eta_r = eta_r
+        self.lambda_T = lambda_T
+        self.T_target = T_target
+        self.C = C
+
+        # 损失函数权重
+        self.lambda_task = lambda_task
+        self.lambda_stdp = lambda_stdp
+        self.lambda_neuron = lambda_neuron
+        self.lambda_time = lambda_time
+        self.lambda_C = lambda_C
+        self.lambda_reg = lambda_reg
 
         super().__init__(
             tie_word_embeddings=tie_word_embeddings,
